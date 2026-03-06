@@ -46,6 +46,31 @@ export declare function setSessionForUser(userId: number, options?: {
     userAgent?: string | null;
     metadata?: Record<string, unknown> | null;
 }): Promise<void>;
+export type ModuleFileRecord = {
+    id: number;
+    [key: string]: unknown;
+};
+export type ModuleFileUploadInput = {
+    file: File;
+    category: string;
+    metadata?: Record<string, unknown> | null;
+    uploadedByUserId?: number | null;
+};
+export type ModuleFileUploadResult = {
+    ok: true;
+    file: ModuleFileRecord;
+} | {
+    ok: false;
+    code: string;
+    message: string;
+};
+export type FileStorageAdapter = {
+    uploadFile: (input: ModuleFileUploadInput) => Promise<ModuleFileUploadResult>;
+    getSignedUrl: (fileId: number, expiresInSeconds?: number) => Promise<string | null>;
+};
+export declare function configureFileStorage(adapter: FileStorageAdapter): void;
+export declare function uploadFile(input: ModuleFileUploadInput): Promise<ModuleFileUploadResult>;
+export declare function getFileSignedUrl(fileId: number, expiresInSeconds?: number): Promise<string | null>;
 export type RevalidationAdapter = {
     revalidatePath: (path: string) => void | Promise<void>;
 };

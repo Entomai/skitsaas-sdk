@@ -136,6 +136,27 @@ export async function setSessionForUser(userId, options) {
     }
     await adapter.setSessionForUser(userId, options);
 }
+let fileStorageAdapter = null;
+export function configureFileStorage(adapter) {
+    fileStorageAdapter = adapter;
+}
+function readFileStorageAdapter() {
+    if (!fileStorageAdapter) {
+        throw new Error('Module SDK file storage adapter not configured. Call configureFileStorage(...) in host bootstrap.');
+    }
+    return fileStorageAdapter;
+}
+export async function uploadFile(input) {
+    const adapter = readFileStorageAdapter();
+    return adapter.uploadFile(input);
+}
+export async function getFileSignedUrl(fileId, expiresInSeconds) {
+    const adapter = readFileStorageAdapter();
+    if (!Number.isInteger(fileId) || fileId <= 0) {
+        return null;
+    }
+    return adapter.getSignedUrl(fileId, expiresInSeconds);
+}
 let revalidationAdapter = null;
 export function configureRevalidation(adapter) {
     revalidationAdapter = adapter;
