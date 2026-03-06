@@ -7,6 +7,7 @@ It provides:
 - server-side runtime helpers
 - curated Drizzle exports
 - datatable CRUD helpers
+- reusable React datatable component for module UIs
 - source-package build and test utilities
 
 ## Installation
@@ -59,12 +60,14 @@ export default defineModule({
   - module i18n and theme i18n types/helpers
   - theme config helper (`defineThemeConfig`)
   - datatable contracts/helpers
+  - React `DataTable` component for module-owned dashboard UIs
   - template utility helpers (`mergeClassNames`, value parsers)
 - `@skitsaas/sdk/server`
   - auth/session helpers (`getUser`, `requireUser`, `requireAdmin`, `setSessionForUser`)
   - event emit helpers (`emitEvent`, `emitEventAsync`)
   - module config helpers (`getModuleConfigValue`, `setModuleConfigValue`)
   - db access bridge (`getDb`, `findTable`, `getTable`, `listTables`)
+  - file storage bridge (`uploadFile`, `getFileSignedUrl`)
   - revalidation helpers (`revalidatePath`, `revalidatePaths`)
   - server action controller + form parsing helpers
   - JSON parsing helpers
