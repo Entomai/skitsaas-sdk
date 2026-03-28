@@ -20,15 +20,23 @@ pnpm add @skitsaas/sdk
 
 Peer dependencies:
 - `react`
+- `react-dom`
 - `drizzle-orm`
+- `@tanstack/react-table`
 
 ## Quick Start
 
 Create a module manifest and export it as default:
 
 ```ts
-import { defineModule } from '@skitsaas/sdk';
-import { createModuleApiRouter } from '@skitsaas/sdk/server';
+import { defineModule, RouteApi } from '@skitsaas/sdk';
+
+const HelloApiRoutes = {
+  ping: RouteApi('/modules/mod.example.hello/ping')
+    .GET()
+    .auth('user')
+    .name('mod.example.hello.api.ping')
+};
 
 export default defineModule({
   moduleId: 'mod.example.hello',
@@ -41,16 +49,9 @@ export default defineModule({
   frontendRouteAliases: ['/hello'],
   frontendRouteAccess: 'public',
 
-  apiHandler: createModuleApiRouter({
-    routes: [
-      {
-        method: 'GET',
-        path: '/ping',
-        auth: 'user',
-        handler: async () => Response.json({ ok: true })
-      }
-    ]
-  })
+  apiRoutes: [
+    HelloApiRoutes.ping.handler(async () => Response.json({ ok: true }))
+  ]
 });
 ```
 
@@ -60,15 +61,19 @@ export default defineModule({
   - module manifest types/helpers (`defineModule`, `validateModuleManifest`)
   - event hooks and event types
   - flat i18n types/helpers (`createTranslator`, `I18nProvider`, `useI18n`)
+  - persisted notification hook/helpers (`useNotifications`, `resolveSdkNotificationAreaFromPath`)
   - theme config helper (`defineThemeConfig`)
-  - datatable contracts/helpers
+  - datatable contracts/helpers + host bridge (`DataTableUiAdapterProvider`)
   - structured form contract/helpers (`defineBuildForm`, `buildFormField`, `withBuildFormValues`, `defineBuildModal`)
   - structured form validation helpers (`defineValidatedBuildForm`, `withBuildFormValidation`, `buildFormRule`, `validateBuildFormLocally`)
   - reusable validation helpers (`normalizeEmail`, `parseOptionalPositiveInt`, `buildFormValidationMessage`, `createBuildFormValidationResultFromFieldMessages`)
   - template utility helpers (`mergeClassNames`, value parsers)
 - `@skitsaas/sdk/server`
   - auth/session helpers (`getUser`, `requireUser`, `requireAdmin`, `setSessionForUser`)
+  - auth provider handoff/state helpers (`getAuthProviderStartState`, `getVerifiedAuthProviderCallbackState`, `validateAuthProviderCallbackState`)
+  - governance read helpers (`listSystemActivityLogs`)
   - event emit helpers (`emitEvent`, `emitEventAsync`)
+  - persisted notification helpers (`createNotification`, `notifyGlobal`, `notifyUser`, `notifyUsers`, `notifyTeam`, `notifyTeamMembers`, `notifyTeamOwner`)
   - module config helpers (`getModuleConfigValue`, `setModuleConfigValue`)
   - db access bridge (`getDb`, `findTable`, `getTable`, `listTables`)
   - revalidation helpers (`revalidatePath`, `revalidatePaths`)
@@ -116,7 +121,7 @@ export function ThemeActionLabel({ themeId }: { themeId?: string }) {
 ## Server Helpers (Host Integration)
 
 `@skitsaas/sdk/server` reads adapters configured by the host runtime (auth, db,
-revalidation, events, config). Module authors only consume these APIs; host
+revalidation, events, config, notifications). Module authors only consume these APIs; host
 projects wire them during bootstrap.
 
 Example:
@@ -132,6 +137,95 @@ export async function listItems() {
   return db.select().from(items).where(eq(items.userId, user.id));
 }
 ```
+
+Auth provider modules can also reuse the core handoff nonce as OAuth/OIDC
+`state` without importing host internals:
+
+```ts
+import {
+  getAuthProviderStartState,
+  validateAuthProviderCallbackState
+} from '@skitsaas/sdk/server';
+
+export async function start(request: Request) {
+  const state = getAuthProviderStartState(request);
+  const redirectUrl = new URL('https://accounts.example.com/authorize');
+  if (state) {
+    redirectUrl.searchParams.set('state', state);
+  }
+
+  return Response.redirect(redirectUrl);
+}
+
+export async function callback(request: Request) {
+  const url = new URL(request.url);
+  const stateCheck = validateAuthProviderCallbackState(
+    request,
+    url.searchParams.get('state')
+  );
+
+  if (!stateCheck.ok) {
+    return Response.json({ error: 'invalid_state' }, { status: 409 });
+  }
+
+  return Response.json({ ok: true });
+}
+```
+
+Governance reads stay read-only and admin-scoped through the host adapter:
+
+```ts
+import { listSystemActivityLogs } from '@skitsaas/sdk/server';
+
+const recentAuthEvents = await listSystemActivityLogs({
+  eventCategory: 'auth',
+  limit: 50,
+  requestId: 'req-123'
+});
+```
+
+## Persisted Notifications
+
+Client components can read the current private notification feed with the SDK hook:
+
+```tsx
+import { useNotifications } from '@skitsaas/sdk';
+
+export function ModuleNotificationBadge() {
+  const { unreadItems } = useNotifications();
+
+  return <span>{unreadItems.length}</span>;
+}
+```
+
+Server code can target all users, direct users, or teams through the host adapter:
+
+```ts
+import { notifyGlobal, notifyTeamOwner, notifyUsers } from '@skitsaas/sdk/server';
+
+await notifyGlobal({
+  title: 'Maintenance',
+  message: 'The platform will restart in 10 minutes.',
+  tone: 'warning'
+});
+
+await notifyUsers([12, 48], {
+  message: 'Your report export is ready.',
+  area: 'dashboard',
+  source: 'mod.analytics.reports'
+});
+
+await notifyTeamOwner(7, {
+  message: 'Your team subscription requires confirmation.',
+  area: 'dashboard'
+});
+```
+
+Notes:
+
+- `createNotification()` accepts `audience.type = 'global' | 'users' | 'team'`.
+- `notifyTeam()`, `notifyTeamMembers()`, and `notifyTeamOwner()` resolve active team recipients in the host runtime before persistence.
+- Backoffice themes can expose the persisted feed from `ui.user-menu` with `useNotifications({ area, includeRead: true })`.
 
 ## Datatable CRUD Router
 
@@ -245,6 +339,10 @@ This is the first structured datatable layer in the SDK. It already supports:
 - query parse/serialize helpers for URL-driven tables
 - portable rendering without host imports
 
+Inside SkitSaaS, the host can also register `DataTableUiAdapterProvider` so
+that this same SDK `DataTable` renders through the richer host/theme table UI
+without changing module imports.
+
 ## Structured Form Builder
 
 ```ts
@@ -276,7 +374,13 @@ const editForm = withBuildFormValues(baseForm, {
 ```
 
 Use the SDK to describe fields, layout, submit target, confirm flows, and prefills.
-The host app resolves rendering and theming through `TemplateBuildForm` + CTC.
+`BuildForm` and `TemplateBuildForm` are now the default module-facing renderers.
+When the module runs inside SkitSaaS, the host upgrades those same SDK imports through:
+
+- `BuildFormUiAdapterProvider` for runtime render delegation
+- `TemplateBuildForm` for host `ui.form` payload resolution
+
+Outside the host, SDK forms still render through the standalone SDK path.
 
 If you need to attach request metadata, submit UI, and prefills in one step, use `composeBuildFormDefinition(...)` instead of chaining helpers manually.
 

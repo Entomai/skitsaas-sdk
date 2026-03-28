@@ -63,6 +63,15 @@ export type ApiRouteEntry = {
     path: string;
     method: HttpMethod;
     authLevel: ApiAuthLevel;
+    /**
+     * Optional role allowlist. When set, only authenticated users whose role is
+     * in this list can access the route (checked after the auth proxy).
+     * Requires configureApiAuthProxies({ roleCheck }) to be configured.
+     *
+     * @example
+     * RouteApi('/modules/mod.x/owner-reports').GET().auth('user').roles('owner', 'teacher')
+     */
+    roles?: string[];
     rateLimitConfig?: RateLimitConfig;
     extraProxies: ApiRouteProxyFn[];
     handler: ApiHandlerFn;
@@ -70,6 +79,12 @@ export type ApiRouteEntry = {
 type ApiAuthConfig = {
     user: ApiRouteProxyFn | null;
     admin: ApiRouteProxyFn | null;
+    /**
+     * Factory that creates a role-check proxy for a given allowlist.
+     * Inject via configureApiAuthProxies({ roleCheck: (roles) => proxyApiRoles(roles) }).
+     * Runs after the auth proxy in the chain.
+     */
+    roleCheck: ((allowedRoles: string[]) => ApiRouteProxyFn) | null;
 };
 /**
  * Inject auth proxy functions for API route dispatch.
@@ -174,13 +189,15 @@ export declare class ApiMethodRouteBuilder {
     private readonly _authLevel;
     private readonly _rateLimitConfig?;
     private readonly _extraProxies;
-    constructor(path: string, method: HttpMethod, authLevel?: ApiAuthLevel, rateLimitConfig?: RateLimitConfig, extraProxies?: ApiRouteProxyFn[]);
+    private readonly _roles;
+    constructor(path: string, method: HttpMethod, authLevel?: ApiAuthLevel, rateLimitConfig?: RateLimitConfig, extraProxies?: ApiRouteProxyFn[], roles?: string[]);
     /**
      * Set the authentication requirement for this route.
      *
      * - 'none'  — public (default)
      * - 'user'  — requires active session; uses proxy injected via configureApiAuthProxies
-     * - 'admin' — requires admin/owner session; uses proxy injected via configureApiAuthProxies
+     * - 'admin' — requires an admin session; uses proxy injected via configureApiAuthProxies
+     *              (host-configurable, default adminAreaRoles = ['admin'])
      */
     auth(level: ApiAuthLevel): ApiMethodRouteBuilder;
     /**
@@ -188,7 +205,7 @@ export declare class ApiMethodRouteBuilder {
      * Rate limit runs first in the proxy chain (before auth — cheapest check first).
      *
      * @example
-     * RouteApi('/api/modules/mod.x/export').POST().auth('user').rateLimit({
+     * RouteApi('/modules/mod.x/export').POST().auth('user').rateLimit({
      *   limit: 10, windowSeconds: 60
      * })
      *
@@ -213,11 +230,20 @@ export declare class ApiMethodRouteBuilder {
      */
     proxy(fns: ApiRouteProxyFn[]): ApiMethodRouteBuilder;
     /**
+     * Restrict this route to users whose role is in the allowlist.
+     * Requires auth('user') or auth('admin') — role check runs after auth.
+     * Requires configureApiAuthProxies({ roleCheck }) in area-setup.ts.
+     *
+     * @example
+     * RouteApi('/modules/mod.school/reports').GET().auth('user').roles('owner', 'teacher')
+     */
+    roles(...allowedRoles: string[]): ApiMethodRouteBuilder;
+    /**
      * Register this route in the named route registry for URL construction.
      * Returns `this` for chaining.
      *
      * @example
-     * RouteApi('/api/modules/mod.x/users').GET().auth('user').name('mod.x.api.users.list')
+     * RouteApi('/modules/mod.x/users').GET().auth('user').name('mod.x.api.users.list')
      * route('mod.x.api.users.list') // '/api/modules/mod.x/users'
      */
     name(routeName: string): this;
@@ -232,6 +258,8 @@ export declare class ApiMethodRouteBuilder {
      * Attach a handler function. Returns an ApiRouteEntry ready for defineModule's apiRoutes array.
      *
      * Call this in manifest.ts (Node.js only — this is where handler imports live).
+     * Keep RouteApi(...).METHOD() builder declarations in routes.ts so metadata can
+     * be imported without eagerly loading backend handlers.
      *
      * @example
      * // manifest.ts

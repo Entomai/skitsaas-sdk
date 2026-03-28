@@ -5,8 +5,20 @@ export function validateModuleManifest(manifest) {
     const errors = [];
     const componentIdPattern = /^[a-z0-9]+(?:[.-][a-z0-9]+)+$/;
     const slotIdPattern = componentIdPattern;
+    const localePattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
     const authProviderIdPattern = /^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$/;
     const paymentMethodIdPattern = authProviderIdPattern;
+    const runtimeConfigNamespacePattern = /^[a-z0-9](?:[a-z0-9._-]{0,120}[a-z0-9])?$/;
+    const runtimeConfigKeyPattern = /^[a-z0-9](?:[a-z0-9._-]{0,120}[a-z0-9])?$/;
+    const runtimeConfigEnvKeyPattern = /^[A-Z][A-Z0-9_]*$/;
+    const languagePackScopes = new Set([
+        'host-global',
+        'host-admin',
+        'host-dashboard',
+        'host-login',
+        'shared-flat',
+        'module-flat'
+    ]);
     if (!manifest.moduleId || !manifest.moduleId.trim()) {
         errors.push('module_id_missing');
     }
@@ -15,6 +27,57 @@ export function validateModuleManifest(manifest) {
     }
     if (!manifest.displayName || !manifest.displayName.trim()) {
         errors.push('module_display_name_missing');
+    }
+    if (manifest.additionalLocales !== undefined) {
+        if (!Array.isArray(manifest.additionalLocales)) {
+            errors.push('module_additional_locales_invalid');
+        }
+        else {
+            const seenAdditionalLocales = new Set();
+            for (let index = 0; index < manifest.additionalLocales.length; index += 1) {
+                const rawLocale = String(manifest.additionalLocales[index] ?? '').trim();
+                const normalizedLocale = rawLocale.replace(/_/g, '-').toLowerCase();
+                if (!normalizedLocale || !localePattern.test(normalizedLocale)) {
+                    errors.push(`module_additional_locales_invalid:${index}`);
+                    continue;
+                }
+                if (seenAdditionalLocales.has(normalizedLocale)) {
+                    errors.push(`module_additional_locales_duplicate:${normalizedLocale}`);
+                    continue;
+                }
+                seenAdditionalLocales.add(normalizedLocale);
+            }
+        }
+    }
+    if (manifest.languagePack !== undefined) {
+        const languagePack = manifest.languagePack;
+        if (!languagePack ||
+            typeof languagePack !== 'object' ||
+            Array.isArray(languagePack)) {
+            errors.push('module_language_pack_invalid');
+        }
+        else if (!Array.isArray(languagePack.scopes) ||
+            languagePack.scopes.length === 0) {
+            errors.push('module_language_pack_scopes_missing');
+        }
+        else {
+            const seenLanguagePackScopes = new Set();
+            for (let index = 0; index < languagePack.scopes.length; index += 1) {
+                const rawScope = String(languagePack.scopes[index] ?? '').trim();
+                const normalizedScope = rawScope.toLowerCase();
+                if (!rawScope ||
+                    rawScope !== normalizedScope ||
+                    !languagePackScopes.has(normalizedScope)) {
+                    errors.push(`module_language_pack_scope_invalid:${index}`);
+                    continue;
+                }
+                if (seenLanguagePackScopes.has(normalizedScope)) {
+                    errors.push(`module_language_pack_scope_duplicate:${normalizedScope}`);
+                    continue;
+                }
+                seenLanguagePackScopes.add(normalizedScope);
+            }
+        }
     }
     const validateAliases = (aliases, area) => {
         if (!aliases?.length) {
@@ -97,6 +160,82 @@ export function validateModuleManifest(manifest) {
     if (manifest.templatePack) {
         validateTemplateEntries(manifest.templatePack.defaults, 'defaults');
         validateTemplateEntries(manifest.templatePack.overrides, 'overrides');
+    }
+    if (manifest.runtimeConfig) {
+        const namespace = manifest.runtimeConfig.namespace?.trim();
+        if (namespace !== undefined &&
+            (!namespace || !runtimeConfigNamespacePattern.test(namespace))) {
+            errors.push('module_runtime_config_namespace_invalid');
+        }
+        if (!Array.isArray(manifest.runtimeConfig.fields) ||
+            manifest.runtimeConfig.fields.length === 0) {
+            errors.push('module_runtime_config_fields_missing');
+        }
+        else {
+            const seenFieldIds = new Set();
+            for (let index = 0; index < manifest.runtimeConfig.fields.length; index += 1) {
+                const field = manifest.runtimeConfig.fields[index];
+                const configKey = String(field?.configKey ?? '').trim();
+                const fieldNamespace = field?.namespace?.trim();
+                const fieldId = `${fieldNamespace ?? namespace ?? ''}:${configKey}`;
+                if (!configKey || !runtimeConfigKeyPattern.test(configKey)) {
+                    errors.push(`module_runtime_config_key_invalid:${index}`);
+                    continue;
+                }
+                if (!field?.label || !String(field.label).trim()) {
+                    errors.push(`module_runtime_config_label_invalid:${index}`);
+                }
+                if (fieldNamespace !== undefined &&
+                    (!fieldNamespace || !runtimeConfigNamespacePattern.test(fieldNamespace))) {
+                    errors.push(`module_runtime_config_namespace_invalid:${index}`);
+                }
+                if (field?.envKey !== undefined &&
+                    (!field.envKey.trim() ||
+                        !runtimeConfigEnvKeyPattern.test(field.envKey.trim()))) {
+                    errors.push(`module_runtime_config_env_key_invalid:${index}`);
+                }
+                const kind = field?.kind ?? 'text';
+                if (kind !== 'text' &&
+                    kind !== 'textarea' &&
+                    kind !== 'number' &&
+                    kind !== 'boolean' &&
+                    kind !== 'password' &&
+                    kind !== 'select') {
+                    errors.push(`module_runtime_config_kind_invalid:${index}`);
+                }
+                if (seenFieldIds.has(fieldId)) {
+                    errors.push(`module_runtime_config_duplicate:${fieldId}`);
+                }
+                else {
+                    seenFieldIds.add(fieldId);
+                }
+                if (kind === 'select') {
+                    if (!Array.isArray(field?.options) || field.options.length === 0) {
+                        errors.push(`module_runtime_config_select_options_missing:${index}`);
+                    }
+                    else {
+                        const seenOptionValues = new Set();
+                        for (const option of field.options) {
+                            const optionValue = String(option?.value ?? '').trim();
+                            const optionLabel = String(option?.label ?? '').trim();
+                            if (!optionValue) {
+                                errors.push(`module_runtime_config_select_option_value_invalid:${index}`);
+                                continue;
+                            }
+                            if (!optionLabel) {
+                                errors.push(`module_runtime_config_select_option_label_invalid:${index}`);
+                            }
+                            if (seenOptionValues.has(optionValue)) {
+                                errors.push(`module_runtime_config_select_option_duplicate:${index}:${optionValue}`);
+                            }
+                            else {
+                                seenOptionValues.add(optionValue);
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
     if (manifest.authProviders) {
         const seenProviderIds = new Set();

@@ -1,8 +1,14 @@
 import type { EventDispatchResult, EventEmitContext, EventHook, EventPayload } from './events/types.js';
 import type { ReactNode } from 'react';
 import type { ModuleApiHandler, ModulePageHandler, ModuleRouteContext } from './modules/manifest.js';
+import type { UseI18nOptions } from './i18n/runtime.js';
+import type { Translator } from './i18n/types.js';
 import type { BuildFormDefinition, BuildFormValue, BuildFormValues } from './forms.js';
+import type { SdkCreateNotificationInput, SdkCreateNotificationResult, SdkNotificationTeamRecipients } from './notifications/types.js';
+import { type ActorBoundSfilesManager, type SFilesActorContext } from './sfiles.js';
 import { type BuildFormDbRef, type BuildFormValidationResult, type ValidatedBuildFormDefinition } from './form-validation.js';
+export type { BuildFormUiTemplateResolution, BuildFormUiTemplateResolverAdapter, BuildFormUiTemplateResolverContext } from './ui/build-form-contract.js';
+export { configureBuildFormUiTemplateResolver } from './ui/build-form-template-resolver.js';
 export type EventEmitterAdapter = {
     emitEvent: <TPayload extends EventPayload>(hook: EventHook, payload: TPayload, context?: EventEmitContext) => Promise<EventDispatchResult>;
     emitEventAsync?: <TPayload extends EventPayload>(hook: EventHook, payload: TPayload, context?: EventEmitContext) => Promise<EventDispatchResult>;
@@ -48,6 +54,74 @@ export declare function setSessionForUser(userId: number, options?: {
     userAgent?: string | null;
     metadata?: Record<string, unknown> | null;
 }): Promise<void>;
+export declare function getAuthProviderStartState(request: Request): string | null;
+export declare function getVerifiedAuthProviderCallbackState(request: Request): string | null;
+export type AuthProviderCallbackStateValidationResult = {
+    ok: true;
+    state: string;
+} | {
+    ok: false;
+    reason: 'unverified_handoff' | 'missing_state' | 'state_mismatch';
+    expectedState: string | null;
+    receivedState: string | null;
+};
+export declare function validateAuthProviderCallbackState(request: Request, state: string | null | undefined): AuthProviderCallbackStateValidationResult;
+export declare function getCurrentSfilesActor(): Promise<SFilesActorContext>;
+export declare function getCurrentSfiles(): Promise<ActorBoundSfilesManager>;
+export type GovernanceActivityLogQuery = {
+    limit?: number;
+    eventCategory?: string | null;
+    status?: string | null;
+    requestId?: string | null;
+    actorUserId?: number | null;
+    entityType?: string | null;
+    entityId?: string | null;
+    search?: string | null;
+};
+export type GovernanceActivityLogRecord = {
+    id: number;
+    eventType: string;
+    eventCategory: string;
+    action: string;
+    status: string;
+    actorUserId: number | null;
+    actorEmail: string | null;
+    actorRole: string | null;
+    targetUserId: number | null;
+    teamId: number | null;
+    teamName: string | null;
+    entityType: string | null;
+    entityId: string | null;
+    source: string | null;
+    ipAddress: string | null;
+    requestId: string | null;
+    message: string | null;
+    metadata: string | null;
+    createdAt: Date;
+};
+export type GovernanceAdapter = {
+    listSystemActivityLogs: (query?: GovernanceActivityLogQuery) => Promise<GovernanceActivityLogRecord[]>;
+};
+export declare function configureGovernance(adapter: GovernanceAdapter): void;
+export declare function listSystemActivityLogs(query?: GovernanceActivityLogQuery): Promise<GovernanceActivityLogRecord[]>;
+export type I18nAdapter = {
+    getServerTranslator: (options?: UseI18nOptions) => Promise<Translator>;
+    getActionTranslator?: (options?: UseI18nOptions) => Promise<Translator>;
+};
+export declare function configureI18n(adapter: I18nAdapter): void;
+export declare function getServerTranslator(options?: UseI18nOptions): Promise<Translator>;
+export declare function getActionTranslator(options?: UseI18nOptions): Promise<Translator>;
+export type NotificationAdapter = {
+    createNotification: (input: SdkCreateNotificationInput) => Promise<SdkCreateNotificationResult>;
+};
+export declare function configureNotifications(adapter: NotificationAdapter): void;
+export declare function createNotification(input: SdkCreateNotificationInput): Promise<SdkCreateNotificationResult>;
+export declare function notifyGlobal(input: Omit<SdkCreateNotificationInput, 'audience'>): Promise<SdkCreateNotificationResult>;
+export declare function notifyUser(userId: number, input: Omit<SdkCreateNotificationInput, 'audience'>): Promise<SdkCreateNotificationResult>;
+export declare function notifyUsers(userIds: number[], input: Omit<SdkCreateNotificationInput, 'audience'>): Promise<SdkCreateNotificationResult>;
+export declare function notifyTeam(teamId: number, input: Omit<SdkCreateNotificationInput, 'audience'>, recipients?: SdkNotificationTeamRecipients): Promise<SdkCreateNotificationResult>;
+export declare function notifyTeamMembers(teamId: number, input: Omit<SdkCreateNotificationInput, 'audience'>): Promise<SdkCreateNotificationResult>;
+export declare function notifyTeamOwner(teamId: number, input: Omit<SdkCreateNotificationInput, 'audience'>): Promise<SdkCreateNotificationResult>;
 export type RevalidationAdapter = {
     revalidatePath: (path: string) => void | Promise<void>;
 };
@@ -217,4 +291,8 @@ export type ModulePageRouterOptions<TUser = unknown> = {
 };
 export declare function createModuleApiRouter<TUser = unknown>({ routes, readRoles, adminRoles, onUnauthorized, onForbidden, onMethodNotAllowed, onNotFound }: ModuleApiRouterOptions<TUser>): ModuleApiHandler;
 export declare function createModulePageRouter<TUser = unknown>({ routes, readRoles, adminRoles, onUnauthorized, onForbidden, onNotFound }: ModulePageRouterOptions<TUser>): ModulePageHandler;
-export {};
+export { configureSubscriptionFeatures, getPlanFeatureValue, getPlanFeatureNumber, checkFeature, getQuotaStatus, consumeQuota, QuotaExceededError, } from './subscription-features.js';
+export type { SubscriptionFeaturesAdapter, SubscriptionFeatureValueType, QuotaContext, PlanFeatureValueResult, FeatureCheckResult, QuotaStatus, ConsumeOptions, ConsumeResult, } from './subscription-features.js';
+export type { ActorBoundSfilesManager, SFileReadResult, SFilesActorContext } from './sfiles.js';
+export { configureUserRoles, configureUserContext, enrichUser, } from './user-roles.js';
+export type { UserRolesConfig, UserContext, RichUser, RichUserMethods, } from './user-roles.js';

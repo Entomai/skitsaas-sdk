@@ -52,6 +52,29 @@ export type ModuleTemplatePack = {
     defaults?: ModuleTemplatePackEntry[];
     overrides?: ModuleTemplatePackEntry[];
 };
+export type ModuleRuntimeConfigFieldKind = 'text' | 'textarea' | 'number' | 'boolean' | 'password' | 'select';
+export type ModuleRuntimeConfigFieldOption = {
+    value: string;
+    label: string;
+};
+export type ModuleRuntimeConfigField = {
+    configKey: string;
+    label: string;
+    description?: string;
+    namespace?: string;
+    envKey?: string;
+    kind?: ModuleRuntimeConfigFieldKind;
+    placeholder?: string;
+    defaultValue?: string;
+    secret?: boolean;
+    options?: ModuleRuntimeConfigFieldOption[];
+};
+export type ModuleRuntimeConfig = {
+    namespace?: string;
+    title?: string;
+    description?: string;
+    fields: ModuleRuntimeConfigField[];
+};
 export type ModuleAuthProviderKind = 'passkey' | 'oauth2' | 'oidc' | 'saml' | 'local' | 'custom';
 export type ModuleAuthProviderFlow = 'login' | 'link' | 'both';
 export type ModuleAuthProviderCapabilities = {
@@ -94,6 +117,10 @@ export type ModulePaymentMethod = {
     routes: ModulePaymentMethodRoutes;
     metadata?: Record<string, unknown>;
 };
+export type ModuleLanguagePackScope = 'host-global' | 'host-admin' | 'host-dashboard' | 'host-login' | 'shared-flat' | 'module-flat';
+export type ModuleLanguagePack = {
+    scopes: ModuleLanguagePackScope[];
+};
 export type ModuleUserRole = {
     roleId: string;
     displayName: string;
@@ -105,6 +132,8 @@ export type ModuleManifest = {
     version: string;
     displayName: string;
     description?: string;
+    additionalLocales?: string[];
+    languagePack?: ModuleLanguagePack;
     i18n?: ModuleMessagesByArea;
     adminNavItems?: ModuleNavItem[];
     dashboardNavItems?: ModuleNavItem[];
@@ -121,13 +150,18 @@ export type ModuleManifest = {
     frontendPage?: ModulePageHandler;
     apiHandler?: ModuleApiHandler;
     /**
-     * Typed API routes defined with RouteApi(...).METHOD().auth().rateLimit().handler(fn).
+     * Preferred typed API surface.
+     *
+     * Define route metadata first in routes.ts with RouteApi(...).METHOD().auth().rateLimit(),
+     * then attach handlers here in manifest.ts with .handler(fn).
+     *
+     * This keeps route metadata importable without eagerly loading handler modules.
      * Takes precedence over apiHandler when present.
-     * Define route metadata in routes.ts (edge-safe) and attach handlers here in manifest.ts.
      */
     apiRoutes?: ApiRouteEntry[];
     eventHandlers?: ModuleEventHandler[];
     templatePack?: ModuleTemplatePack;
+    runtimeConfig?: ModuleRuntimeConfig;
     authProviders?: ModuleAuthProvider[];
     paymentMethods?: ModulePaymentMethod[];
     standaloneHomeComponent?: ComponentType<{

@@ -1,5 +1,8 @@
 import vine, { ValidationError } from '@vinejs/vine';
+import { bindSfilesActor } from './sfiles.js';
+import { enrichUser } from './user-roles.js';
 import { createBuildFormValidationResultFromFieldErrors, createBuildFormValidationResult, createBuildFormValidationIssue, getBuildFormValidationRulesForFieldRuntime, getBuildFormFieldByName, listBuildFormFields, normalizeBuildFormValuesFromFormData } from './form-validation.js';
+export { configureBuildFormUiTemplateResolver } from './ui/build-form-template-resolver.js';
 function toTrimmedString(value) {
     if (typeof value !== 'string') {
         return '';
@@ -137,6 +140,216 @@ export async function setSessionForUser(userId, options) {
         throw new Error('setSessionForUser requires a positive integer userId.');
     }
     await adapter.setSessionForUser(userId, options);
+}
+const AUTH_PROVIDER_START_STATE_HEADER = 'x-skitsaas-auth-provider-state';
+const AUTH_PROVIDER_VERIFIED_HEADER = 'x-skitsaas-auth-provider-handoff-verified';
+const AUTH_PROVIDER_NONCE_HEADER = 'x-skitsaas-auth-provider-handoff-nonce';
+function readAuthProviderHeader(request, name) {
+    const value = request.headers.get(name);
+    return value ? value.trim() || null : null;
+}
+export function getAuthProviderStartState(request) {
+    return readAuthProviderHeader(request, AUTH_PROVIDER_START_STATE_HEADER);
+}
+export function getVerifiedAuthProviderCallbackState(request) {
+    if (readAuthProviderHeader(request, AUTH_PROVIDER_VERIFIED_HEADER) !== '1') {
+        return null;
+    }
+    return readAuthProviderHeader(request, AUTH_PROVIDER_NONCE_HEADER);
+}
+export function validateAuthProviderCallbackState(request, state) {
+    const expectedState = getVerifiedAuthProviderCallbackState(request);
+    const receivedState = toTrimmedString(state) || null;
+    if (!expectedState) {
+        return {
+            ok: false,
+            reason: 'unverified_handoff',
+            expectedState: null,
+            receivedState
+        };
+    }
+    if (!receivedState) {
+        return {
+            ok: false,
+            reason: 'missing_state',
+            expectedState,
+            receivedState: null
+        };
+    }
+    if (receivedState !== expectedState) {
+        return {
+            ok: false,
+            reason: 'state_mismatch',
+            expectedState,
+            receivedState
+        };
+    }
+    return {
+        ok: true,
+        state: expectedState
+    };
+}
+export async function getCurrentSfilesActor() {
+    const user = await getUser();
+    if (!user || !Number.isInteger(user.id) || user.id <= 0) {
+        return {
+            userId: null,
+            isAdmin: false
+        };
+    }
+    return {
+        userId: user.id,
+        isAdmin: enrichUser({
+            id: user.id,
+            role: typeof user.role === 'string' ? user.role : ''
+        }).isAdmin()
+    };
+}
+export async function getCurrentSfiles() {
+    return bindSfilesActor(await getCurrentSfilesActor());
+}
+let governanceAdapter = null;
+export function configureGovernance(adapter) {
+    governanceAdapter = adapter;
+}
+function readGovernanceAdapter() {
+    if (!governanceAdapter) {
+        throw new Error('Module SDK governance adapter not configured.');
+    }
+    return governanceAdapter;
+}
+export async function listSystemActivityLogs(query = {}) {
+    await requireAdmin();
+    const adapter = readGovernanceAdapter();
+    return adapter.listSystemActivityLogs(query);
+}
+let i18nAdapter = null;
+export function configureI18n(adapter) {
+    i18nAdapter = adapter;
+}
+function readI18nAdapter() {
+    if (!i18nAdapter) {
+        throw new Error('Module SDK i18n adapter not configured. Call configureI18n(...) in host bootstrap.');
+    }
+    return i18nAdapter;
+}
+export async function getServerTranslator(options = {}) {
+    const adapter = readI18nAdapter();
+    return adapter.getServerTranslator(options);
+}
+export async function getActionTranslator(options = {}) {
+    const adapter = readI18nAdapter();
+    if (adapter.getActionTranslator) {
+        return adapter.getActionTranslator(options);
+    }
+    return adapter.getServerTranslator(options);
+}
+let notificationAdapter = null;
+export function configureNotifications(adapter) {
+    notificationAdapter = adapter;
+}
+function readNotificationAdapter() {
+    if (!notificationAdapter) {
+        throw new Error('Module SDK notification adapter not configured.');
+    }
+    return notificationAdapter;
+}
+function normalizePositiveInteger(value) {
+    if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) {
+        return null;
+    }
+    return value;
+}
+function normalizePositiveIntegerArray(values) {
+    return Array.from(new Set(values.map((value) => normalizePositiveInteger(value)).filter(Boolean))).sort((left, right) => left - right);
+}
+function normalizeTeamRecipients(value) {
+    if (value === 'members' || value === 'owner' || value === 'all') {
+        return value;
+    }
+    return 'all';
+}
+export async function createNotification(input) {
+    const adapter = readNotificationAdapter();
+    const message = toTrimmedString(input.message);
+    if (!message) {
+        throw new Error('createNotification requires a non-empty message.');
+    }
+    const audience = input.audience?.type === 'users'
+        ? {
+            type: 'users',
+            userIds: normalizePositiveIntegerArray(input.audience.userIds)
+        }
+        : input.audience?.type === 'team'
+            ? {
+                type: 'team',
+                teamId: normalizePositiveInteger(input.audience.teamId) ?? 0,
+                recipients: normalizeTeamRecipients(input.audience.recipients)
+            }
+            : {
+                type: 'global'
+            };
+    if (audience.type === 'users' && audience.userIds.length === 0) {
+        throw new Error('createNotification requires at least one positive target user id.');
+    }
+    if (audience.type === 'team' && audience.teamId <= 0) {
+        throw new Error('createNotification requires a positive integer teamId.');
+    }
+    return adapter.createNotification({
+        ...input,
+        message,
+        audience
+    });
+}
+export async function notifyGlobal(input) {
+    return createNotification({
+        ...input,
+        audience: {
+            type: 'global'
+        }
+    });
+}
+export async function notifyUser(userId, input) {
+    const normalizedUserId = normalizePositiveInteger(userId);
+    if (!normalizedUserId) {
+        throw new Error('notifyUser requires a positive integer userId.');
+    }
+    return createNotification({
+        ...input,
+        audience: {
+            type: 'users',
+            userIds: [normalizedUserId]
+        }
+    });
+}
+export async function notifyUsers(userIds, input) {
+    return createNotification({
+        ...input,
+        audience: {
+            type: 'users',
+            userIds
+        }
+    });
+}
+export async function notifyTeam(teamId, input, recipients = 'all') {
+    const normalizedTeamId = normalizePositiveInteger(teamId);
+    if (!normalizedTeamId) {
+        throw new Error('notifyTeam requires a positive integer teamId.');
+    }
+    return createNotification({
+        ...input,
+        audience: {
+            type: 'team',
+            teamId: normalizedTeamId,
+            recipients
+        }
+    });
+}
+export async function notifyTeamMembers(teamId, input) {
+    return notifyTeam(teamId, input, 'members');
+}
+export async function notifyTeamOwner(teamId, input) {
+    return notifyTeam(teamId, input, 'owner');
 }
 let revalidationAdapter = null;
 let buildFormDbValidationAdapter = null;
@@ -989,3 +1202,7 @@ export function createModulePageRouter({ routes, readRoles, adminRoles = DEFAULT
         return null;
     };
 }
+// ─── Subscription Features / Quota Controller ─────────────────────────────────
+export { configureSubscriptionFeatures, getPlanFeatureValue, getPlanFeatureNumber, checkFeature, getQuotaStatus, consumeQuota, QuotaExceededError, } from './subscription-features.js';
+// ─── RichUser / role checks / UserContext ─────────────────────────────────────
+export { configureUserRoles, configureUserContext, enrichUser, } from './user-roles.js';

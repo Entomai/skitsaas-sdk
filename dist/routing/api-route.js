@@ -40,6 +40,7 @@ import { RouteBuilder } from './builder.js';
 const apiAuthConfig = {
     user: null,
     admin: null,
+    roleCheck: null,
 };
 /**
  * Inject auth proxy functions for API route dispatch.
@@ -60,6 +61,8 @@ export function configureApiAuthProxies(config) {
         apiAuthConfig.user = config.user;
     if (config.admin !== undefined)
         apiAuthConfig.admin = config.admin;
+    if (config.roleCheck !== undefined)
+        apiAuthConfig.roleCheck = config.roleCheck;
 }
 export function getApiAuthConfig() {
     return apiAuthConfig;
@@ -209,6 +212,13 @@ export async function dispatchApiRoutes(routes, request) {
         else if (entry.authLevel === 'user' && apiAuthConfig.user) {
             proxies.push(apiAuthConfig.user);
         }
+        // 2b. Role check — runs after auth, only when roles allowlist is set
+        if (entry.roles?.length) {
+            if (!apiAuthConfig.roleCheck) {
+                return Response.json({ error: 'Route role guard is not configured.' }, { status: 500 });
+            }
+            proxies.push(apiAuthConfig.roleCheck(entry.roles));
+        }
         // 3. Extra proxies (feature flags, custom checks)
         proxies.push(...entry.extraProxies);
         // Execute chain — first non-null response short-circuits
@@ -295,29 +305,32 @@ export class ApiMethodRouteBuilder {
     _authLevel;
     _rateLimitConfig;
     _extraProxies;
-    constructor(path, method, authLevel = 'none', rateLimitConfig, extraProxies = []) {
+    _roles;
+    constructor(path, method, authLevel = 'none', rateLimitConfig, extraProxies = [], roles = []) {
         this.path = path;
         this.method = method;
         this._authLevel = authLevel;
         this._rateLimitConfig = rateLimitConfig;
         this._extraProxies = extraProxies;
+        this._roles = roles;
     }
     /**
      * Set the authentication requirement for this route.
      *
      * - 'none'  — public (default)
      * - 'user'  — requires active session; uses proxy injected via configureApiAuthProxies
-     * - 'admin' — requires admin/owner session; uses proxy injected via configureApiAuthProxies
+     * - 'admin' — requires an admin session; uses proxy injected via configureApiAuthProxies
+     *              (host-configurable, default adminAreaRoles = ['admin'])
      */
     auth(level) {
-        return new ApiMethodRouteBuilder(this.path, this.method, level, this._rateLimitConfig, this._extraProxies);
+        return new ApiMethodRouteBuilder(this.path, this.method, level, this._rateLimitConfig, this._extraProxies, this._roles);
     }
     /**
      * Add rate limiting to this route.
      * Rate limit runs first in the proxy chain (before auth — cheapest check first).
      *
      * @example
-     * RouteApi('/api/modules/mod.x/export').POST().auth('user').rateLimit({
+     * RouteApi('/modules/mod.x/export').POST().auth('user').rateLimit({
      *   limit: 10, windowSeconds: 60
      * })
      *
@@ -333,7 +346,7 @@ export class ApiMethodRouteBuilder {
      * })
      */
     rateLimit(config) {
-        return new ApiMethodRouteBuilder(this.path, this.method, this._authLevel, config, this._extraProxies);
+        return new ApiMethodRouteBuilder(this.path, this.method, this._authLevel, config, this._extraProxies, this._roles);
     }
     /**
      * Add extra proxy functions (feature flags, custom guards, quota checks, etc.).
@@ -343,14 +356,25 @@ export class ApiMethodRouteBuilder {
      * .proxy([proxyFeatureFlag('premium'), proxyQuota('exports')])
      */
     proxy(fns) {
-        return new ApiMethodRouteBuilder(this.path, this.method, this._authLevel, this._rateLimitConfig, [...this._extraProxies, ...fns]);
+        return new ApiMethodRouteBuilder(this.path, this.method, this._authLevel, this._rateLimitConfig, [...this._extraProxies, ...fns], this._roles);
+    }
+    /**
+     * Restrict this route to users whose role is in the allowlist.
+     * Requires auth('user') or auth('admin') — role check runs after auth.
+     * Requires configureApiAuthProxies({ roleCheck }) in area-setup.ts.
+     *
+     * @example
+     * RouteApi('/modules/mod.school/reports').GET().auth('user').roles('owner', 'teacher')
+     */
+    roles(...allowedRoles) {
+        return new ApiMethodRouteBuilder(this.path, this.method, this._authLevel, this._rateLimitConfig, this._extraProxies, allowedRoles);
     }
     /**
      * Register this route in the named route registry for URL construction.
      * Returns `this` for chaining.
      *
      * @example
-     * RouteApi('/api/modules/mod.x/users').GET().auth('user').name('mod.x.api.users.list')
+     * RouteApi('/modules/mod.x/users').GET().auth('user').name('mod.x.api.users.list')
      * route('mod.x.api.users.list') // '/api/modules/mod.x/users'
      */
     name(routeName) {
@@ -376,6 +400,8 @@ export class ApiMethodRouteBuilder {
      * Attach a handler function. Returns an ApiRouteEntry ready for defineModule's apiRoutes array.
      *
      * Call this in manifest.ts (Node.js only — this is where handler imports live).
+     * Keep RouteApi(...).METHOD() builder declarations in routes.ts so metadata can
+     * be imported without eagerly loading backend handlers.
      *
      * @example
      * // manifest.ts
@@ -389,6 +415,7 @@ export class ApiMethodRouteBuilder {
             path: this.path,
             method: this.method,
             authLevel: this._authLevel,
+            ...(this._roles.length ? { roles: this._roles } : {}),
             rateLimitConfig: this._rateLimitConfig,
             extraProxies: this._extraProxies,
             handler: fn,
